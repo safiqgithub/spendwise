@@ -52,8 +52,11 @@ type AppData = {
   budgets: Budget[];
 };
 
-const STORAGE_KEY = "spendwise-app-data-v2";
+const STORAGE_KEY_PREFIX = "spendwise-app-data-v2";
 
+function storageKey(userId: string) {
+  return `${STORAGE_KEY_PREFIX}-${userId}`;
+}
 const defaultCategories: Category[] = [
   { id: "food", name: "Food", icon: "FD", color: "#0f766e", isDefault: true },
   { id: "rent", name: "Rent", icon: "RT", color: "#2563eb", isDefault: true },
@@ -135,14 +138,13 @@ function getCategory(categories: Category[], categoryId: string) {
 function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [authChecked, setAuthChecked] = useState(!supabaseConfigured);
-  const [data, setData] = useState<AppData>(() => {
-    const saved = window.localStorage.getItem(STORAGE_KEY);
-    return saved ? { ...cloneDefaultData(), ...JSON.parse(saved) } : cloneDefaultData();
-  });
+ const [data, setData] = useState<AppData>(cloneDefaultData);
 
-  useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  }, [data]);
+useEffect(() => {
+  if (session?.user?.id) {
+    window.localStorage.setItem(storageKey(session.user.id), JSON.stringify(data));
+  }
+}, [data, session]);
 
   useEffect(() => {
     if (!supabaseConfigured) {
@@ -150,6 +152,7 @@ function App() {
     }
 
     supabase.auth.getSession().then(({ data: authData }) => {
+      console.log("Logged User:", authData.session?.user?.id);
       setSession(authData.session);
       setAuthChecked(true);
     });
@@ -157,22 +160,34 @@ function App() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession);
-      if (nextSession?.user?.email) {
-        const metadataName =
-          typeof nextSession.user.user_metadata?.display_name === "string"
-            ? nextSession.user.user_metadata.display_name
-            : "";
-        setData((current) => ({
-          ...current,
-          profile: {
-            ...current.profile,
-            email: nextSession.user.email ?? current.profile.email,
-            displayName: current.profile.displayName || metadataName,
-          },
-        }));
-      }
+  setSession(nextSession);
+  if (nextSession?.user) {
+    const userId = nextSession.user.id;
+    const metadataName =
+      typeof nextSession.user.user_metadata?.display_name === "string"
+        ? nextSession.user.user_metadata.display_name
+        : "";
+
+    // Load THIS user's saved data from localStorage
+    const saved = window.localStorage.getItem(storageKey(userId));
+    const userData: AppData = saved
+      ? { ...cloneDefaultData(), ...JSON.parse(saved) }
+      : cloneDefaultData();
+
+    // Sync email + displayName from auth
+    setData({
+      ...userData,
+      profile: {
+        ...userData.profile,
+        email: nextSession.user.email ?? userData.profile.email,
+        displayName: userData.profile.displayName || metadataName,
+      },
     });
+  } else {
+    // User logged out — wipe state
+    setData(cloneDefaultData());
+  }
+});
 
     return () => subscription.unsubscribe();
   }, []);
@@ -222,14 +237,14 @@ function App() {
             </AppShell>
           }
         />
-        <Route
-          path="/profile"
-          element={
-            <AppShell data={data}>
-              <ProfilePage data={data} setData={setData} />
-            </AppShell>
-          }
-        />
+       <Route
+  path="/profile"
+  element={
+    <AppShell data={data}>
+      <ProfilePage data={data} setData={setData} session={session} />
+    </AppShell>
+  }
+/>
       </Routes>
     </BrowserRouter>
   );
@@ -521,12 +536,13 @@ function ResetPasswordPage() {
 function AppShell({ data, children }: { data: AppData; children: React.ReactNode }) {
   const navigate = useNavigate();
 
-  async function logout() {
-    if (supabaseConfigured) {
-      await supabase.auth.signOut();
-    }
-    navigate("/login");
+ async function logout() {
+  if (supabaseConfigured) {
+    await supabase.auth.signOut();
   }
+  // State wipe is handled by onAuthStateChange above
+  navigate("/login");
+}
 
   return (
     <div className="app-shell">
@@ -1068,9 +1084,11 @@ function BudgetsPage({
 function ProfilePage({
   data,
   setData,
+  session,
 }: {
   data: AppData;
   setData: React.Dispatch<React.SetStateAction<AppData>>;
+  session: Session | null;
 }) {
   const [displayName, setDisplayName] = useState(data.profile.displayName);
   const [monthlyIncome, setMonthlyIncome] = useState(String(data.profile.monthlyIncome));
@@ -1149,15 +1167,17 @@ function ProfilePage({
     setMessage("Demo mode: password reset will send after Supabase is configured.");
   }
 
-  function deleteAccount() {
-    if (deleteText !== "DELETE") {
-      setMessage("Type DELETE to confirm account deletion.");
-      return;
-    }
-    window.localStorage.removeItem(STORAGE_KEY);
-    setData(cloneDefaultData());
-    setMessage("Demo data reset. Supabase auth deletion should be handled with a secure server function.");
+function deleteAccount() {
+  if (deleteText !== "DELETE") {
+    setMessage("Type DELETE to confirm account deletion.");
+    return;
   }
+  if (session?.user?.id) {
+    window.localStorage.removeItem(storageKey(session.user.id));
+  }
+  setData(cloneDefaultData());
+  setMessage("Demo data reset. Supabase auth deletion should be handled with a secure server function.");
+}
 
   return (
     <main className="page">
