@@ -2204,8 +2204,7 @@ function ResetPasswordPage() {
 
 // ─── App Shell ────────────────────────────────────────────────────────────────
 
-function AppShell({ data, session, children }: { data: AppData; session: Session | null; children: React.ReactNode }) {
-  const navigate = useNavigate();
+function AppShell({ data, children }: { data: AppData; session?: Session | null; children: React.ReactNode }) {  const navigate = useNavigate();
 
   async function logout() {
     if (supabaseConfigured) await supabase.auth.signOut();
